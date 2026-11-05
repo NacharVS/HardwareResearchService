@@ -1,0 +1,69 @@
+name: Build PLC Research Standalone
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "tools/PLCResearchStandalone/**"
+      - ".github/workflows/plc-research-standalone.yml"
+
+jobs:
+  build-windows-x64:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify source archive checksum
+        shell: pwsh
+        run: |
+          $archive = "tools/PLCResearchStandalone/source/DigitalWater_PLC_Research_Standalone_v3_0.zip"
+          $expected = "717b14f77524dfd2dc98692a2a20ac51be8f9e75c70fe1a249d1b606047f2725"
+          $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "Source archive SHA256 mismatch. Expected=$expected Actual=$actual"
+          }
+
+      - name: Extract standalone source
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "plc-source" | Out-Null
+          Expand-Archive `
+            -LiteralPath "tools/PLCResearchStandalone/source/DigitalWater_PLC_Research_Standalone_v3_0.zip" `
+            -DestinationPath "plc-source" `
+            -Force
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore win-x64
+        shell: pwsh
+        run: |
+          dotnet restore "plc-source/src/DigitalWater.PLCResearch.csproj" -r win-x64
+
+      - name: Publish self-contained win-x64
+        shell: pwsh
+        run: |
+          dotnet publish "plc-source/src/DigitalWater.PLCResearch.csproj" `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            --no-restore `
+            -p:DebugType=None `
+            -p:DebugSymbols=false `
+            -o "artifact"
+
+          Copy-Item "plc-source/README.txt" "artifact/README.txt" -Force
+          Copy-Item "plc-source/OPC_DA_REQUIREMENTS.txt" "artifact/OPC_DA_REQUIREMENTS.txt" -Force
+          Copy-Item "plc-source/PROVENANCE.json" "artifact/PROVENANCE.json" -Force
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DigitalWater-PLC-Research-Standalone-v3.0-win-x64
+          path: artifact/**
+          if-no-files-found: error
